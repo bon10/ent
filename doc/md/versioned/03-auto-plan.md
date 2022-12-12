@@ -41,53 +41,52 @@ migration files for us. Let's create a new file called `main.go` in the `ent/mig
 of our project:
 
 ```go title=ent/migrate/main.go
-//go:build ignore
-
 package main
 
 import (
     "context"
     "log"
     "os"
-    
-    // highlight-next-line
-    "<project>/ent/migrate"
 
-    atlas "ariga.io/atlas/sql/migrate"
-    "entgo.io/ent/dialect"
+    "ariga.io/atlas/sql/migrate"
+    "entgo.io/ent/dialect/sql"
     "entgo.io/ent/dialect/sql/schema"
+    "entgo.io/ent/entc"
+    "entgo.io/ent/entc/gen"
     _ "github.com/go-sql-driver/mysql"
 )
 
-const (
-	dir = "ent/migrate/migrations"
-)
-
 func main() {
-    ctx := context.Background()
-    // Create a local migration directory able to understand Atlas migration file format for replay.
-    if err := os.MkdirAll(dir, 0755); err != nil {
-		log.Fatalf("creating migration directory: %v", err)
-	}
-    dir, err := atlas.NewLocalDir(dir)
+    // We need a name for the new migration file.
+    if len(os.Args) < 2 {
+        log.Fatalln("no name given")
+    }
+    // Create a local migration directory.
+    dir, err := migrate.NewLocalDir("migrations")
     if err != nil {
-        log.Fatalf("failed creating atlas migration directory: %v", err)
+        log.Fatalln(err)
     }
-    // Migrate diff options.
-    opts := []schema.MigrateOption{
-        schema.WithDir(dir),                         // provide migration directory
-        schema.WithMigrationMode(schema.ModeReplay), // provide migration mode
-        schema.WithDialect(dialect.MySQL),           // Ent dialect to use
-        schema.WithFormatter(atlas.DefaultFormatter),
-    }
-    if len(os.Args) != 2 {
-        log.Fatalln("migration name is required. Use: 'go run -mod=mod ent/migrate/main.go <name>'")
-    }
-    // Generate migrations using Atlas support for MySQL (note the Ent dialect option passed above).
-    //highlight-next-line
-    err = migrate.NamedDiff(ctx, "mysql://root:pass@localhost:3306/dev", os.Args[1], opts...)
+    // Load the graph.
+    graph, err := entc.LoadGraph("./ent/schema", &gen.Config{})
     if err != nil {
-        log.Fatalf("failed generating migration file: %v", err)
+        log.Fatalln(err)
+    }
+    tbls, err := graph.Tables()
+    if err != nil {
+        log.Fatalln(err)
+    }
+    // Open connection to the database.
+    drv, err := sql.Open("mysql", "root:pass@tcp(localhost:3306)/ent")
+    if err != nil {
+        log.Fatalln(err)
+    }
+    // Inspect the current database state and compare it with the graph.
+    m, err := schema.NewMigrate(drv, schema.WithDir(dir))
+    if err != nil {
+        log.Fatalln(err)
+    }
+    if err := m.NamedDiff(context.Background(), os.Args[1], tbls...); err != nil {
+        log.Fatalln(err)
     }
 }
 ```
